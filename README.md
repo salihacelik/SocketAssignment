@@ -17,7 +17,7 @@ Client 2 (Receiver): Gelen paketi açar, sağlamasını tekrar hesaplar ve verin
 
       middleman.py: Hata enjeksiyon (Error Injection) algoritmalarını içerir.
 
-r     eceiver.py: Alıcı tarafın doğrulama ve dinleme mantığını içerir.
+      receiver.py: Alıcı tarafın doğrulama ve dinleme mantığını içerir.
 
 ⚙️ Özellikler ve Algoritmalar
         1. Hata Tespit Yöntemleri (Error Detection Methods)

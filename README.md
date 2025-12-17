@@ -1,5 +1,5 @@
 📡 Veri İletişimi ve Hata Denetim Simülatörü
-    Bu proje, Veri İletişimi (Data Communication) dersi kapsamında; verilerin ağ üzerindeki iletimini, iletim sırasında oluşabilecek gürültüleri (hataları) ve bu hataların matematiksel yöntemlerle       tespit edilmesini simüle eden bir Soket Programlama (Socket Programming) uygulamasıdır.
+    Bu proje, Veri İletişimi (Data Communication) dersi kapsamında; verilerin ağ üzerindeki iletimini, iletim sırasında oluşabilecek gürültüleri (hataları) ve bu hataların matematiksel yöntemlerle       tespit edilmesini simüle eden bir Socket Programming uygulamasıdır.
 
 
 Client 1 (Sender): Veriyi oluşturur, seçilen algoritma (CRC, Parity vb.) ile kontrol kodunu hesaplar ve paketler.

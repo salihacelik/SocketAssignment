@@ -1,100 +1,108 @@
 # -- coding: utf-8 --
 import socket
-import json
 import random
 import threading
-import tkinter as tk  # EKLENDİ
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
 
-# ----------------------------------
-#  HATA ENJEKSİYON MANTIĞI
-# ----------------------------------
+# ======================================================
+# KATMAN 1: MANTIK (LOGIC) - HATA ENJEKSİYONU
+# PDF Kaynak: [34-52]
+# ======================================================
+class NoiseLogic:
+    @staticmethod
+    def _split_packet(packet_str):
+        parts = packet_str.split('|')
+        if len(parts) >= 3:
+            return parts[0], parts[1], parts[2]
+        return packet_str, "", ""
 
-def inject_bit_flip(text):
-    b_data = bytearray(text, 'utf-8')
-    if b_data:
+    @staticmethod
+    def inject_bit_flip(text):
+        """ 1. Bit Flip: Rastgele bir biti ters çevirir [cite: 36] """
+        if not text: return text
+        b_data = bytearray(text, 'utf-8')
         idx = random.randint(0, len(b_data) - 1)
-        b_data[idx] ^= 1 
-    return b_data.decode('utf-8', errors='replace')
+        mask = 1 << random.randint(0, 7)
+        b_data[idx] ^= mask
+        return b_data.decode('utf-8', errors='replace')
 
-def inject_noise(text):
-    return text + random.choice(["#", "?", "!", "\0"])
+    @staticmethod
+    def inject_multiple_bit_flips(text):
+        """ 6. Multiple Bit Flips: Birden fazla biti bozar  """
+        if not text: return text
+        # 2 ile 4 arasında rastgele sayıda bit flip uygula
+        count = random.randint(2, 4)
+        temp_text = text
+        for _ in range(count):
+            temp_text = NoiseLogic.inject_bit_flip(temp_text)
+        return temp_text
 
-def no_error(text):
-    return text
+    @staticmethod
+    def inject_char_substitution(text):
+        """ 2. Character Substitution [cite: 38] """
+        if not text: return text
+        idx = random.randint(0, len(text) - 1)
+        new_char = chr(random.randint(65, 90)) 
+        return text[:idx] + new_char + text[idx+1:]
 
-ERROR_MODES = {
-    "No Interference": no_error,
-    "Bit Flip (1-bit)": inject_bit_flip,
-    "Noise Addition": inject_noise
-}
+    @staticmethod
+    def inject_char_deletion(text):
+        """ 3. Character Deletion [cite: 40] """
+        if len(text) < 2: return text
+        idx = random.randint(0, len(text) - 1)
+        return text[:idx] + text[idx+1:]
 
-# ----------------------------------
-#  SUNUCU MANTIĞI
-# ----------------------------------
+    @staticmethod
+    def inject_char_insertion(text):
+        """ 4. Random Character Insertion [cite: 43] """
+        if not text: return "X"
+        idx = random.randint(0, len(text))
+        new_char = chr(random.randint(65, 90))
+        return text[:idx] + new_char + text[idx:]
 
-def run_server():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        server.bind(("localhost", 5000))
-    except OSError:
-        lbl_status.config(text="Status: PORT ERROR (Restart App)", bootstyle="danger")
-        return
+    @staticmethod
+    def inject_char_swapping(text):
+        """ 5. Character Swapping: Yan yana iki harfi değiştirir  """
+        if len(text) < 2: return text
+        idx = random.randint(0, len(text) - 2)
+        # String immutable olduğu için listeye çevirip değiştiriyoruz
+        chars = list(text)
+        chars[idx], chars[idx+1] = chars[idx+1], chars[idx]
+        return "".join(chars)
 
-    server.listen(1)
-    lbl_status.config(text="Status: LISTENING (Port 5000)", bootstyle="success")
+    @staticmethod
+    def inject_burst_error(text):
+        """ 7. Burst Error: 3-8 karakterlik diziyi bozar [cite: 51] """
+        if len(text) < 3: return NoiseLogic.inject_bit_flip(text)
+        
+        burst_len = random.randint(3, min(8, len(text)))
+        start_idx = random.randint(0, len(text) - burst_len)
+        
+        corrupted_segment = "".join(chr(random.randint(33, 126)) for _ in range(burst_len))
+        return text[:start_idx] + corrupted_segment + text[start_idx+burst_len:]
 
-    while True:
-        client, addr = server.accept()
-        raw_data = client.recv(4096)
-        client.close()
-
-        if not raw_data: continue
-
+    @staticmethod
+    def process_packet(raw_packet, mode_name):
         try:
-            packet = json.loads(raw_data.decode('utf-8'))
-            original_payload = packet['payload']
-            
-            error_func = ERROR_MODES[cmb_err.get()]
-            corrupted_payload = error_func(original_payload)
-            
-            packet['payload'] = corrupted_payload
-            
-            log_msg = f"Rcv: {original_payload} -> Sent: {corrupted_payload}"
-            list_log.insert(0, log_msg)
+            data, method, checksum = NoiseLogic._split_packet(raw_packet)
+            if not method: return raw_packet
 
-            fwd_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            fwd_sock.connect(("localhost", 6000))
-            fwd_sock.sendall(json.dumps(packet).encode('utf-8'))
-            fwd_sock.close()
+            # Hata Yöntemleri Haritası
+            modes = {
+                "No Error": lambda x: x,
+                "Bit Flip": NoiseLogic.inject_bit_flip,
+                "Multi Flip": NoiseLogic.inject_multiple_bit_flips, # YENİ
+                "Substitution": NoiseLogic.inject_char_substitution,
+                "Deletion": NoiseLogic.inject_char_deletion,
+                "Insertion": NoiseLogic.inject_char_insertion,
+                "Swapping": NoiseLogic.inject_char_swapping,       # YENİ
+                "Burst Error": NoiseLogic.inject_burst_error
+            }
+            
+            func = modes.get(mode_name, lambda x: x)
+            corrupted_data = func(data)
+
+            return f"{corrupted_data}|{method}|{checksum}"
 
         except Exception as e:
-            list_log.insert(0, f"Error: {e}")
-
-def start_thread():
-    threading.Thread(target=run_server, daemon=True).start()
-
-# ----------------------------------
-#  GUI
-# ----------------------------------
-root = ttk.Window(title="CHANNEL NOISE SIMULATOR", themename="superhero", size=(500, 400))
-
-ttk.Label(root, text="Network Channel (Middleman)", font=("Impact", 16)).pack(pady=10)
-lbl_status = ttk.Label(root, text="Status: IDLE", bootstyle="secondary")
-lbl_status.pack()
-
-frame_ctrl = ttk.Labelframe(root, text="Interference Settings", padding=10)
-frame_ctrl.pack(fill=X, padx=10, pady=10)
-
-cmb_err = ttk.Combobox(frame_ctrl, values=list(ERROR_MODES.keys()), state="readonly")
-cmb_err.current(0)
-cmb_err.pack(fill=X)
-
-ttk.Button(root, text="Start Server Engine", command=start_thread, bootstyle="info").pack(pady=5)
-
-# DÜZELTME BURADA YAPILDI:
-list_log = tk.Listbox(root, bg="#2b3e50", fg="white", borderwidth=0)
-list_log.pack(fill=BOTH, expand=True, padx=10, pady=10)
-
-root.mainloop()
+            print(f"Packet Processing Error: {e}")
+            return raw_packet

@@ -1,136 +1,147 @@
 # -- coding: utf-8 --
 import socket
-import json
 import zlib
 import threading
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
 
-# ----------------------------------
-#  VALIDATION LOGIC
-# ----------------------------------
-# Must match Sender's logic exactly
-def calc_parity(text: str) -> str:
-    val = 0
-    for char in text.encode():
-        val ^= char
-    return f"{val:02X}"
+# ======================================================
+# KATMAN 1: MANTIK (LOGIC)
+# ======================================================
+class VerificationLogic:
+    @staticmethod
+    def calc_parity_even(text: str) -> str:
+        ones = VerificationLogic._count_set_bits(text)
+        return "01" if (ones % 2 != 0) else "00"
 
-def calc_crc32(text: str) -> str:
-    crc = zlib.crc32(text.encode())
-    return f"{crc & 0xFFFFFFFF:08X}"
-
-def calc_checksum(text: str) -> str:
-    total = sum(text.encode())
-    return f"{total % 256:02X}"
-
-def calc_hamming(text: str) -> str:
-    return "HAMMING-SIMULATED"
-
-VALIDATORS = {
-    "Simple Parity": calc_parity,
-    "CRC-32": calc_crc32,
-    "Sum Checksum": calc_checksum,
-    "Hamming Code": calc_hamming
-}
-
-# ----------------------------------
-#  LISTENER
-# ----------------------------------
-def start_listener():
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.bind(("localhost", 6000)) # Listen on 6000
-    srv.listen(1)
-    
-    btn_connect.config(state="disabled", text="Running...")
-    
-    def listener_loop():
-        while True:
-            conn, addr = srv.accept()
-            data = conn.recv(4096)
-            conn.close()
+    @staticmethod
+    def calc_parity_odd(text: str) -> str:
+        
+        ones = VerificationLogic._count_set_bits(text)
+        return "01" if (ones % 2 == 0) else "00"
+    @staticmethod
+    def calc_2d_parity(text: str) -> str:
+        #2D Parity Hesaplama
+        data_bytes = text.encode('utf-8')
+        width = 8
+        remainder = len(data_bytes) % width
+        if remainder != 0:
+            data_bytes += b'\x00' * (width - remainder)
             
-            if data:
-                process_packet(data)
-    
-    threading.Thread(target=listener_loop, daemon=True).start()
+        rows = [data_bytes[i:i+width] for i in range(0, len(data_bytes), width)]
+        col_parities = [0] * width
+        row_parities = []
 
-def process_packet(raw_json):
-    try:
-        packet = json.loads(raw_json.decode('utf-8'))
+        for row in rows:
+            r_xor = 0
+            for idx, byte in enumerate(row):
+                r_xor ^= byte
+                col_parities[idx] ^= byte
+            row_parities.append(r_xor)
+
+        row_hex = "".join([f"{x:02X}" for x in row_parities])
+        col_hex = "".join([f"{x:02X}" for x in col_parities])
+        return f"{row_hex}-{col_hex}"
+
+    @staticmethod
+    def calc_crc32(text: str) -> str:
+        #CRC-32 Hesaplama
+        crc = zlib.crc32(text.encode('utf-8'))
+        return f"{crc & 0xFFFFFFFF:08X}"
+
+    @staticmethod
+    def calc_hamming(text: str) -> str:
+        #Hamming Simülasyonu
+        checksum_arr = []
+        for char in text:
+            ascii_val = ord(char)
+            check_byte = (ascii_val * 7) % 256 
+            checksum_arr.append(f"{check_byte:02X}")
+        return "".join(checksum_arr)
+
+    @staticmethod
+    def verify_packet(raw_packet):
+       
+        #Gelen paketi parçalar, yeniden hesaplar ve durumu raporlar.
         
-        payload = packet.get("payload", "")
-        algo = packet.get("algorithm", "")
-        received_hash = packet.get("checksum", "")
-        
-        # Recalculate
-        func = VALIDATORS.get(algo)
-        calculated_hash = func(payload) if func else "??"
-        
-        is_valid = (received_hash == calculated_hash)
-        
-        # Update UI (Must be done on main thread usually, but ttk handles simple updates)
-        update_ui(payload, algo, received_hash, calculated_hash, is_valid)
-        
-    except json.JSONDecodeError:
-        print("Invalid Packet Format")
+        # 1. Paketi Parçala: DATA|METHOD|CHECKSUM
+        try:
+            parts = raw_packet.split('|')
+            if len(parts) < 3:
+                return {
+                    "status": "INVALID FORMAT",
+                    "data": raw_packet,
+                    "method": "Unknown",
+                    "sent_crc": "N/A",
+                    "calc_crc": "N/A"
+                }
+            
+            data = parts[0]
+            method = parts[1]
+            sent_checksum = parts[2]
+        except:
+            return {"status": "ERROR"}
 
-def update_ui(data, algo, remote_hash, local_hash, valid):
-    # Clear fields
-    ent_data.delete(0, END)
-    ent_data.insert(0, data)
-    
-    ent_algo.delete(0, END)
-    ent_algo.insert(0, algo)
-    
-    ent_rem.delete(0, END)
-    ent_rem.insert(0, remote_hash)
-    
-    ent_loc.delete(0, END)
-    ent_loc.insert(0, local_hash)
-    
-    if valid:
-        lbl_result.config(text="INTEGRITY VERIFIED", bootstyle="success", font=("Arial", 14, "bold"))
-    else:
-        lbl_result.config(text="DATA CORRUPTION DETECTED", bootstyle="danger", font=("Arial", 14, "bold"))
+        # 2. Yönteme Göre Yeniden Hesapla
+        algorithms = {
+            "Parity": VerificationLogic.calc_simple_parity,
+            "2D Parity": VerificationLogic.calc_2d_parity,
+            "CRC-32": VerificationLogic.calc_crc32,
+            "Hamming": VerificationLogic.calc_hamming
+        }
 
-# ----------------------------------
-#  GUI
-# ----------------------------------
-root = ttk.Window(title="RECEIVER NODE", themename="solar", size=(600, 500))
+        func = algorithms.get(method)
+        if not func:
+            return {"status": "UNKNOWN METHOD", "data": data, "method": method}
 
-# Top
-frame_head = ttk.Frame(root, padding=20)
-frame_head.pack(fill=X)
-btn_connect = ttk.Button(frame_head, text="Open Port 6000", command=start_listener, bootstyle="primary")
-btn_connect.pack(side=RIGHT)
-ttk.Label(frame_head, text="Receiver Analysis", font=("Helvetica", 18)).pack(side=LEFT)
+        calculated_checksum = func(data)
 
-# Dashboard
-frame_dash = ttk.Frame(root, padding=20)
-frame_dash.pack(fill=BOTH, expand=True)
+        # 3. Karşılaştır
+        # Eğer veri bozulmadıysa checksumlar EŞİT olmalıdır.
+        if sent_checksum == calculated_checksum:
+            status = "DATA CORRECT" 
+        else:
+            status = "DATA CORRUPTED" 
 
-# Grid Layout for Fields
-ttk.Label(frame_dash, text="Incoming Payload:", bootstyle="info").grid(row=0, column=0, sticky=W, pady=5)
-ent_data = ttk.Entry(frame_dash, width=50)
-ent_data.grid(row=0, column=1, pady=5)
+        return {
+            "status": status,
+            "data": data,
+            "method": method,
+            "sent_crc": sent_checksum,
+            "calc_crc": calculated_checksum
+        }
 
-ttk.Label(frame_dash, text="Algorithm Used:", bootstyle="info").grid(row=1, column=0, sticky=W, pady=5)
-ent_algo = ttk.Entry(frame_dash, width=50)
-ent_algo.grid(row=1, column=1, pady=5)
+# ======================================================
+# KATMAN 2: AĞ (NETWORKING)
+# ======================================================
+class ReceiverServer:
+    def __init__(self, port, on_result_callback):
+        self.port = port
+        self.callback = on_result_callback
+        self.running = False
 
-ttk.Separator(frame_dash, orient=HORIZONTAL).grid(row=2, column=0, columnspan=2, sticky="ew", pady=15)
+    def start(self):
+        if self.running: return
+        self.running = True
+        threading.Thread(target=self._listen_loop, daemon=True).start()
 
-ttk.Label(frame_dash, text="Expected Hash:", bootstyle="secondary").grid(row=3, column=0, sticky=W, pady=5)
-ent_rem = ttk.Entry(frame_dash, width=50)
-ent_rem.grid(row=3, column=1, pady=5)
+    def _listen_loop(self):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            srv.bind(("localhost", self.port))
+            srv.listen(1)
+            
+            while self.running:
+                try:
+                    conn, addr = srv.accept()
+                    data = conn.recv(4096).decode('utf-8')
+                    conn.close()
 
-ttk.Label(frame_dash, text="Calculated Hash:", bootstyle="warning").grid(row=4, column=0, sticky=W, pady=5)
-ent_loc = ttk.Entry(frame_dash, width=50)
-ent_loc.grid(row=4, column=1, pady=5)
-
-# Big Result Label
-lbl_result = ttk.Label(root, text="WAITING FOR PACKET...", font=("Arial", 12), anchor="center")
-lbl_result.pack(fill=X, pady=20)
-
-root.mainloop()
+                    if data:
+                        # Gelen ham veriyi mantık katmanına gönder
+                        result = VerificationLogic.verify_packet(data)
+                        # Sonucu UI'ya bildir
+                        self.callback(result)
+                except Exception as e:
+                    print(f"Bağlantı Hatası: {e}")
+                    
+        except Exception as e:
+            print(f"Sunucu Başlatma Hatası (Port {self.port}): {e}")

@@ -20,6 +20,7 @@ Client 2 (Receiver): Gelen paketi açar, sağlamasını tekrar hesaplar ve verin
       receiver.py: Alıcı tarafın doğrulama ve dinleme mantığını içerir.
 
 ⚙️ Özellikler ve Algoritmalar
+        
         1. Hata Tespit Yöntemleri (Error Detection Methods)
       Gönderici tarafında aşağıdaki algoritmalar simüle edilmiştir:
 
